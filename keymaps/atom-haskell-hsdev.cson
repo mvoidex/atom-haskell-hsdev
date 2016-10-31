@@ -8,4 +8,6 @@
 # For more detailed documentation see
 # https://atom.io/docs/latest/behind-atom-keymaps-in-depth
 'atom-workspace':
-  'ctrl-alt-o': 'atom-haskell-hsdev:toggle'
+  'ctrl-alt-u': 'atom-haskell-hsdev:toggle'
+  'ctrl-alt-i': 'atom-haskell-hsdev:ping'
+  'ctrl-alt-t': 'atom-haskell-hsdev:test'
