@@ -5,11 +5,11 @@ net = require 'net'
 
 module.exports =
   class HsDevAgent
-    constructor: (port, cache, log_file, log_config) ->
+    constructor: (port, db, log_file, log_config) ->
       @disposables = new CompositeDisposable
       @disposables.add @emitter = new Emitter
       @port = port
-      @cache = cache
+      @db = db
       @log_file = log_file
       @log_config = log_config
       @id = 0
@@ -33,7 +33,7 @@ module.exports =
           lastLine = last
         lines.forEach (line) =>
           console.log "line: #{line}"
-          if line.match(/.*?hsdev> Server started at port (.*)$/)
+          if line.match(/Server started at port (.*)$/)
             @connect()
       @process.on 'exit', (code) ->
         console.log "hsdev exited with #{code}"
@@ -56,6 +56,12 @@ module.exports =
         lines.forEach (line) =>
           @receive line
       @hsdev.connect(port = 1234)
+
+    destroy: =>
+      console.log "Stopping hsdev"
+
+      @hsdev.end()
+      @process.stdin.end()
 
     send: (cmd) =>
       if @hsdev?

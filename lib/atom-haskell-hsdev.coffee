@@ -11,12 +11,13 @@ module.exports = AtomHaskellHsdev =
     @atomHaskellHsdevView = new AtomHaskellHsdevView(state.atomHaskellHsdevViewState)
     @modalPanel = atom.workspace.addModalPanel(item: @atomHaskellHsdevView.getElement(), visible: false)
 
-    @agent = new HsDevAgent(port = 1234)
+    @agent = new HsDevAgent(port=1234)
 
     # Events subscribed to in atom's sys
     @subscriptions = new CompositeDisposable
 
     # Register command that toggles this view
+    @subscriptions.add atom.commands.add 'atom-workspace', 'atom-haskell-hsdev:restart': => @restart()
     @subscriptions.add atom.commands.add 'atom-workspace', 'atom-haskell-hsdev:toggle': => @toggle()
     @subscriptions.add atom.commands.add 'atom-workspace', 'atom-haskell-hsdev:ping': => @ping()
     @subscriptions.add atom.commands.add 'atom-workspace', 'atom-haskell-hsdev:test': => @test()
@@ -28,6 +29,12 @@ module.exports = AtomHaskellHsdev =
 
   serialize: ->
     atomHaskellHsdevViewState: @atomHaskellHsdevView.serialize()
+
+  restart: ->
+    console.log 'AtomHaskellHsdev restarting'
+
+    @agent.destroy()
+    @agent = new HsDevAgent(port=1234)
 
   toggle: ->
     console.log 'AtomHaskellHsdev was toggled!'
@@ -43,7 +50,7 @@ module.exports = AtomHaskellHsdev =
   test: ->
     @agent.ping (resp) ->
         console.log "response: #{JSON.stringify(resp)}"
-    @agent.call 'scan', {'paths': ['d:/users/voidex/Documents/Projects/haskell']},
+    @agent.call 'scan', {'projects': ['d:\\users\\voidex\\Documents\\Projects\\hsdev'], 'cabal': true},
       response = (resp) ->
         console.log "response: #{JSON.stringify(resp)}",
       notify = (n) ->
