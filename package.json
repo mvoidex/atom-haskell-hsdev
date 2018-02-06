@@ -1,18 +1,58 @@
 {
   "name": "atom-haskell-hsdev",
   "main": "./lib/atom-haskell-hsdev",
-  "version": "0.0.0",
-  "description": "A short description of your package",
+  "version": "0.0.1",
+  "description": "Provides backends for ide-haskell and autocomplete-haskell",
   "keywords": [
+    "ide-haskell",
+    "ide",
+    "haskell",
+    "hsdev",
+    "backend"
   ],
-  "activationCommands": {
-    "atom-workspace": "atom-haskell-hsdev:toggle"
-  },
-  "repository": "https://github.com/atom/atom-haskell-hsdev",
+  "repository": "https://github.com/mvoidex/atom-haskell-hsdev",
   "license": "MIT",
   "engines": {
-    "atom": ">=1.0.0 <2.0.0"
+    "atom": ">=1.19.0 <2.0.0"
   },
+  "activationHooks": [
+    "language-haskell:grammar-used"
+  ],
   "dependencies": {
+    "atom-haskell-utils": "^1.0.1",
+    "atom-select-list": "^0.7.0",
+    "fuzzaldrin": "^2.1.0",
+    "pidusage": "^1.2.0",
+    "promise-queue": "^2.2.5",
+    "temp": "^0.8.3",
+    "tslib": "^1.9.0",
+    "underscore": "^1.8.3"
+  },
+  "consumedServices": {
+    "ide-haskell-upi": {
+      "description": "Uses ide-haskell's unified pluggable interface",
+      "versions": {
+        "^0.3.0": "consumeUPI"
+      }
+    }
+  },
+  "providedServices": {
+    "haskell-completion-backend": {
+      "description": "Implements general haskell-completion-backend spec",
+      "versions": {
+        "1.0.0": "provideCompletionBackend"
+      }
+    }
+  },
+  "devDependencies": {
+    "@types/atom": "^1.23.0",
+    "@types/fuzzaldrin": "^2.1.1",
+    "@types/node": "^8.5.2",
+    "@types/pidusage": "^1.1.1",
+    "@types/temp": "^0.8.31",
+    "@types/underscore": "^1.8.6",
+    "atom-haskell-tslint-rules": "0.1.1",
+    "tslint": "^5.8.0",
+    "typescript": "^2.6.2"
   }
 }
