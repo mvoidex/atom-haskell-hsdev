@@ -37,6 +37,24 @@ export interface Callbacks {
   onResponse?: (response: any) => void
 }
 
+export type SearchType = 'exact' | 'prefix' | 'infix' | 'suffix'
+
+export interface Query {
+  query: string,
+  searchType?: SearchType,
+  header?: boolean,
+}
+
+export interface QueryFilters {
+  project?: string,
+  file?: string,
+  module?: string,
+  package?: string,
+  installed?: boolean,
+  sourced?: boolean,
+  standalone?: boolean,
+}
+
 export class HsDevProcessReal {
   private disposables: CompositeDisposable
   private emitter: Emitter<{
@@ -47,6 +65,7 @@ export class HsDevProcessReal {
   }>
   private proc: InteractiveProcess | undefined
   private sock: net.Socket | undefined
+  private asyncSocket: Promise<net.Socket | undefined> | undefined
   private buffer: string = ''
   private id: number = 0
   private callbacks: {[id: string]: Callbacks} = {}
@@ -98,18 +117,20 @@ export class HsDevProcessReal {
   }
 
   private async startServer(): Promise<InteractiveProcess | undefined> {
-    debug(`Checking for hsdev`)
     if (this.proc) {
-      debug(`Found running hsdev instance`)
       return this.proc
     }
     debug(`Spawning new hsdev instance for with`, this.options)
     const modPath = atom.config.get('atom-haskell-hsdev.hsdevPath')
     const dbPath = atom.config.get('atom-haskell-hsdev.hsdevDb')
+    const hsdevPort: number | undefined = atom.config.get('atom-haskell-hsdev.hsdevPort')
     const runOpts: string[] = []
     runOpts.push('run')
     if (this.options.port) {
       runOpts.push('--port', this.options.port.toString())
+    }
+    else if (hsdevPort) {
+      runOpts.push('--port', hsdevPort.toString())
     }
     if (this.options.db) {
       runOpts.push('--db', this.options.db)
@@ -130,7 +151,6 @@ export class HsDevProcessReal {
       this.proc = undefined
     })
     const { stdout } = await this.proc.readLine()
-    debug(`Received line: ${stdout[0]}`)
     const started = /Server started at port (.*)$/.exec(stdout[0])
     if (started) {
       debug('Started hsdev')
@@ -156,7 +176,6 @@ export class HsDevProcessReal {
         this.buffer = lines.pop() || ''
       }
       for (const line of lines) {
-        debug(`received response: ${line}`)
         const resp = JSON.parse(line)
         const id = resp['id']
         if (id) {
@@ -189,13 +208,20 @@ export class HsDevProcessReal {
     return this.connectHsDev()
   }
 
+  public async socket(): Promise<net.Socket | undefined> {
+    if (!this.asyncSocket) {
+      this.asyncSocket = this.initProcess()
+    }
+    return await this.asyncSocket
+  }
+
   public async call(
     command: string,
     opts: {[name: string]: any} = {},
     callbacks?: Callbacks
   ): Promise<any> {
-    debug(`Running hsdev command ${command} with opts: ${opts}`)
-    const sock = await this.initProcess()
+    // debug(`Running hsdev command ${command} with opts: ${opts}`)
+    const sock = await this.socket()
     if (!sock) {
       throw('Error getting socket')
     }
@@ -222,13 +248,20 @@ export class HsDevProcessReal {
         }
       }
       this.callbacks[id] = calls
-      debug(`Sending command: ${JSON.stringify(cmd)}`)
       sock.write(JSON.stringify(cmd) + '\n')
     })
   }
 
   public async ping(callbacks?: Callbacks) {
     return await this.call('ping', {}, callbacks)
+  }
+
+  public async setFileContents(
+    file: string,
+    contents: string,
+    callbacks?: Callbacks
+  ) {
+    return await this.call('set-file-contents', {'file': file, 'contents': contents}, callbacks)
   }
 
   public async whoat(
@@ -257,34 +290,16 @@ export class HsDevProcessReal {
   }
 
   public async symbol(
-    opts: {
-      query: string,
-      searchType: 'exact' | 'prefix' | 'infix' | 'suffix',
-      project?: string,
-      file?: string,
-      module?: string,
-      package?: string,
-      installed: boolean,
-      sourced: boolean,
-      standalone: boolean,
-      localNames: boolean,
-      header: boolean
-    } = {
-      query: '',
-      searchType: 'prefix',
-      installed: false,
-      sourced: false,
-      standalone: false,
-      localNames: false,
-      header: false
-    },
+    opts: Query & QueryFilters & { localNames?: boolean },
     callbacks?: Callbacks
   ) {
     const params = {
-      'input': opts.query,
-      'type': opts.searchType,
-      'locals': opts.localNames,
-      'header': opts.header,
+      'query': {
+        'input': opts.query,
+        'type': opts.searchType || 'prefix',
+      },
+      'locals': opts.localNames == true,
+      'header': opts.header == true,
     }
     const filters: any[] = []
     if (opts.project) { filters.push({'project': opts.project}) }
@@ -296,6 +311,69 @@ export class HsDevProcessReal {
     if (opts.standalone) { filters.push('standalone') }
     params['filters'] = filters
     return await this.call('symbol', params, callbacks)
+  }
+
+  public async module(
+    opts: Query & QueryFilters,
+    callbacks?: Callbacks
+  ) {
+    const params = {
+      'query': {
+        'input': opts.query,
+        'type': opts.searchType || 'prefix',
+      },
+      'header': opts.header == true,
+    }
+
+    const filters: any[] = []
+    if (opts.project) { filters.push({'project': opts.project}) }
+    if (opts.file) { filters.push({'file': opts.file}) }
+    if (opts.module) { filters.push({'module': opts.module}) }
+    if (opts.package) { filters.push({'package': opts.package}) }
+    if (opts.installed) { filters.push('installed') }
+    if (opts.sourced) { filters.push('sourced') }
+    if (opts.standalone) { filters.push('standalone') }
+    params['filters'] = filters
+    return await this.call('module', params, callbacks)
+  }
+
+  public async complete(
+    prefix: string,
+    file: string,
+    wide: boolean = false,
+    callbacks?: Callbacks
+  ) {
+    return await this.call('complete', {
+      'prefix': prefix,
+      'file': file,
+      'wide': wide,
+    }, callbacks)
+  }
+
+  public async scope(
+    opts: Query & { file: string },
+    callbacks?: Callbacks
+  ) {
+    return await this.call('scope', {
+      'query': {
+        'input': opts.query,
+        'type': opts.searchType || 'prefix',
+      },
+      'file': opts.file,
+    }, callbacks)
+  }
+
+  public async scopeModules(
+    opts: Query & { file: string },
+    callbacks?: Callbacks
+  ) {
+    return await this.call('scope modules', {
+      'query': {
+        'input': opts.query,
+        'type': opts.searchType || 'prefix',
+      },
+      'file': opts.file,
+    }, callbacks)
   }
 
   public async infer(
@@ -366,5 +444,13 @@ export class HsDevProcessReal {
 
   public async scanCabal(callbacks?: Callbacks) {
     return await this.call('scan', {'cabal': true}, callbacks)
+  }
+
+  public async langs(callbacks?: Callbacks) {
+    return await this.call('langs', {}, callbacks)
+  }
+
+  public async flags(callbacks?: Callbacks) {
+    return await this.call('flags', {}, callbacks)
   }
 }

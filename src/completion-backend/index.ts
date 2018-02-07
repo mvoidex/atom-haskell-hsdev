@@ -14,18 +14,10 @@ const { handleException } = Util
 // tslint:disable-next-line:no-unsafe-any
 export class CompletionBackend implements CB.ICompletionBackend {
   private bufferMap: WeakMap<TextBuffer, BufferInfo>
-  private dirMap: WeakMap<Directory, Map<string, ModuleInfo>>
-  private modListMap: WeakMap<Directory, string[]>
-  private languagePragmas: WeakMap<Directory, string[]>
-  private compilerOptions: WeakMap<Directory, string[]>
   private isActive: boolean
 
   constructor(private process: HsDevProcess, public upi: Promise<UPI.IUPIInstance>) {
     this.bufferMap = new WeakMap()
-    this.dirMap = new WeakMap()
-    this.modListMap = new WeakMap()
-    this.languagePragmas = new WeakMap()
-    this.compilerOptions = new WeakMap()
 
     // compatibility with old clients
     this.name = this.name.bind(this)
@@ -83,19 +75,21 @@ export class CompletionBackend implements CB.ICompletionBackend {
       return new Disposable(() => { /* void */ })
     }
 
-    const { bufferInfo } = this.getBufferInfo({ buffer })
+    this.bufferMap.set(buffer, new BufferInfo(buffer))
+
+    const file = buffer.getUri()
+    buffer.onDidSave(async (_event) => {
+      const buf: BufferInfo | undefined = this.bufferMap.get(buffer)
+      if (buf) {
+        delete buf.completions
+      }
+      const contents: string = buffer.getText()
+      await this.process.backend.setFileContents(file, contents)
+      await this.process.backend.scanFile({ file, scanProject: false, scanDeps: false })
+    })
 
     setImmediate(async () => {
-      const { rootDir, moduleMap } = await this.getModuleMap({ bufferInfo })
-
-      // tslint:disable-next-line:no-floating-promises
-      this.getModuleInfo({ bufferInfo, rootDir, moduleMap })
-
-      const imports = await bufferInfo.getImports()
-      for (const imprt of imports) {
-        // tslint:disable-next-line:no-floating-promises
-        this.getModuleInfo({ moduleName: imprt.name, bufferInfo, rootDir, moduleMap })
-      }
+      this.process.backend.scanFile({ file })
     })
 
     return new Disposable(() =>
@@ -139,7 +133,7 @@ export class CompletionBackend implements CB.ICompletionBackend {
   ): Promise<CB.ISymbol[]> {
     if (!this.isActive) { throw new Error('Backend inactive') }
 
-    const symbols = await this.getSymbolsForBuffer(buffer)
+    const symbols = await this.getCompletionsForBuffer(buffer)
     return this.filter(symbols, prefix, ['qname', 'qparent'])
   }
 
@@ -159,7 +153,7 @@ export class CompletionBackend implements CB.ICompletionBackend {
   ): Promise<CB.ISymbol[]> {
     if (!this.isActive) { throw new Error('Backend inactive') }
 
-    const symbols = await this.getSymbolsForBuffer(buffer, ['type', 'class'])
+    const symbols = await this.getCompletionsForBuffer(buffer, ['type', 'class'])
     return FZ.filter(symbols, prefix, { key: 'qname' })
   }
 
@@ -178,7 +172,7 @@ export class CompletionBackend implements CB.ICompletionBackend {
   ): Promise<CB.ISymbol[]> {
     if (!this.isActive) { throw new Error('Backend inactive') }
 
-    const symbols = await this.getSymbolsForBuffer(buffer, ['class'])
+    const symbols = await this.getCompletionsForBuffer(buffer, ['class'])
     return FZ.filter(symbols, prefix, { key: 'qname' })
   }
 
@@ -195,15 +189,19 @@ export class CompletionBackend implements CB.ICompletionBackend {
     buffer: TextBuffer, prefix: string, _position: Point,
   ): Promise<string[]> {
     if (!this.isActive) { throw new Error('Backend inactive') }
-    const rootDir = await this.process.getRootDir(buffer)
-    let modules = this.modListMap.get(rootDir)
-    if (!modules) {
-      modules = await this.process.runList(buffer)
-      this.modListMap.set(rootDir, modules)
-      // refresh every minute
-      setTimeout((() => this.modListMap.delete(rootDir)), 60 * 1000)
+    const modules = await this.process.backend.scopeModules({
+      query: prefix,
+      searchType: 'prefix',
+      file: buffer.getUri(),
+    })
+    const parts: number = prefix.split('.').length
+    const names: string[] = []
+    for (const m of modules) {
+      if (m.name.split('.').length == parts) {
+        names.push(m.name)
+      }
     }
-    return FZ.filter(modules, prefix)
+    return names
   }
 
   /*
@@ -236,23 +234,9 @@ export class CompletionBackend implements CB.ICompletionBackend {
       )
     }
 
-    const { bufferInfo } = this.getBufferInfo({ buffer })
-    const mis = await this.getModuleInfo({ bufferInfo, moduleName })
-
-    // tslint:disable: no-null-keyword
-    const symbols = await mis.moduleInfo.select(
-      {
-        qualified: false,
-        hiding: false,
-        name: moduleName || mis.moduleName,
-        importList: null,
-        alias: null,
-      },
-      undefined,
-      true,
-    )
+    return [] // TODO: Implement
     // tslint:enable: no-null-keyword
-    return FZ.filter(symbols, prefix, { key: 'name' })
+    // return FZ.filter(symbols, prefix, { key: 'name' })
   }
 
   /*
@@ -265,17 +249,10 @@ export class CompletionBackend implements CB.ICompletionBackend {
   pragma: String, language option
   */
   public async getCompletionsForLanguagePragmas(
-    buffer: TextBuffer, prefix: string, _position: Point,
+    _buffer: TextBuffer, prefix: string, _position: Point,
   ): Promise<string[]> {
     if (!this.isActive) { throw new Error('Backend inactive') }
-
-    const dir = await this.process.getRootDir(buffer)
-
-    let ps = this.languagePragmas.get(dir)
-    if (!ps) {
-      ps = await this.process.runLang(dir)
-      ps && this.languagePragmas.set(dir, ps)
-    }
+    const ps: string[] = await this.process.backend.langs()
     return FZ.filter(ps, prefix)
   }
 
@@ -289,17 +266,10 @@ export class CompletionBackend implements CB.ICompletionBackend {
   ghcopt: String, compiler option (starts with '-f')
   */
   public async getCompletionsForCompilerOptions(
-    buffer: TextBuffer, prefix: string, _position: Point,
+    _buffer: TextBuffer, prefix: string, _position: Point,
   ): Promise<string[]> {
     if (!this.isActive) { throw new Error('Backend inactive') }
-
-    const dir = await this.process.getRootDir(buffer)
-
-    let co = this.compilerOptions.get(dir)
-    if (!co) {
-      co = await this.process.runFlag(dir)
-      this.compilerOptions.set(dir, co)
-    }
+    const co: string[] = await this.process.backend.flags()
     return FZ.filter(co, prefix)
   }
 
@@ -317,116 +287,85 @@ export class CompletionBackend implements CB.ICompletionBackend {
   */
   @handleException
   public async getCompletionsForHole(
-    buffer: TextBuffer, prefix: string, position: Point,
+    _buffer: TextBuffer, _prefix: string, _position: Point,
   ): Promise<CB.ISymbol[]> {
     if (!this.isActive) { throw new Error('Backend inactive') }
-    const range = new Range(position, position)
-    if (prefix.startsWith('_')) { prefix = prefix.slice(1) }
-    const { type } = await this.process.getTypeInBuffer(buffer, range)
-    const symbols = await this.getSymbolsForBuffer(buffer)
-    const ts = symbols.filter((s) => {
-      if (!s.typeSignature) { return false }
-      const tl = s.typeSignature.split(' -> ').slice(-1)[0]
-      if (tl.match(/^[a-z]$/)) { return false }
-      const ts2 = tl.replace(/[.?*+^$[\]\\(){}|-]/g, '\\$&')
-      const rx = RegExp(ts2.replace(/\b[a-z]\b/g, '.+'), '')
-      return rx.test(type)
-    })
-    if (prefix.length === 0) {
-      // tslint:disable-next-line: no-non-null-assertion
-      return ts.sort((a, b) => FZ.score(b.typeSignature!, type) - FZ.score(a.typeSignature!, type))
-    } else {
-      return FZ.filter(ts, prefix, { key: 'qname' })
-    }
+    return [] // TODO: Implement
   }
 
-  private async getSymbolsForBuffer(
+  private async getCompletionsForBuffer(
     buffer: TextBuffer, symbolTypes?: CB.SymbolType[],
   ): Promise<CB.ISymbol[]> {
-    const { bufferInfo } = this.getBufferInfo({ buffer })
-    const { rootDir, moduleMap } = await this.getModuleMap({ bufferInfo })
-    if (bufferInfo && moduleMap) {
-      const imports = await bufferInfo.getImports()
-      const promises = await Promise.all(
-        imports.map(async (imp) => {
-          const res = await this.getModuleInfo({
-            bufferInfo,
-            moduleName: imp.name,
-            rootDir,
-            moduleMap,
-          })
-          if (!res) { return [] }
-          return res.moduleInfo.select(imp, symbolTypes)
-        }),
+    let symbols: CB.ISymbol[] = []
+
+    const buf: BufferInfo | undefined = this.bufferMap.get(buffer)
+    if (buf && buf.completions) {
+      symbols = buf.completions
+    }
+    else {
+      const comps: any[] = await this.process.backend.complete(
+        '',
+        buffer.getUri(),
       )
-      return ([] as typeof promises[0]).concat(...promises)
-    } else {
-      return []
-    }
-  }
+      for (const comp of comps) {
+        let symType: CB.SymbolType = 'function'
+        switch (comp.info.what) {
+          case 'function':
+          case 'method':
+          case 'selector':
+          case 'pat-selector':
+          case 'pat-constructor':
+          case 'constructor':
+            symType = 'function'
+            break
+          case 'type':
+          case 'newtype':
+          case 'data':
+          case 'type-family':
+          case 'data-family':
+            symType = 'type'
+            break
+          case 'class':
+            symType = 'class'
+            break
+          default:
+            break
+        }
+        if (symbolTypes && !(symType in symbolTypes)) {
+          continue
+        }
 
-  private getBufferInfo({ buffer }: { buffer: TextBuffer }): { bufferInfo: BufferInfo } {
-    let bi = this.bufferMap.get(buffer)
-    if (!bi) {
-      bi = new BufferInfo(buffer)
-      this.bufferMap.set(buffer, bi)
+        symbols.push({
+          qparent: comp.qualifier,
+          qname: comp.qualifier ? `${comp.qualifier}.${comp.id.name}` : comp.id.name,
+          name: comp.id.name,
+          symbolType: symType,
+          typeSignature: comp.info.type,
+          // FIXME: Use import module
+          module: {
+            name: comp.id.module.name,
+            hiding: false,
+            qualified: false,
+            alias: null,
+            importList: null,
+          }
+        })
+      }
+      if (buf) {
+        Util.debug(`Caching ${symbols.length} completions for ${buffer.getUri()}`)
+        buf.completions = symbols
+      }
     }
-    return { bufferInfo: bi }
-  }
-
-  private async getModuleMap(
-    { bufferInfo, rootDir }: { bufferInfo: BufferInfo, rootDir?: Directory },
-  ): Promise<{ rootDir: Directory, moduleMap: Map<string, ModuleInfo> }> {
-    if (!rootDir) {
-      rootDir = await this.process.getRootDir(bufferInfo.buffer)
+    if (!symbolTypes) {
+      return symbols
     }
-    let mm = this.dirMap.get(rootDir)
-    if (!mm) {
-      mm = new Map()
-      this.dirMap.set(rootDir, mm)
+    const result: CB.ISymbol[] = []
+    for (const sym of symbols) {
+      if (sym.symbolType in symbolTypes) {
+        result.push(sym)
+      }
     }
-
-    return {
-      rootDir,
-      moduleMap: mm,
-    }
-  }
-
-  private async getModuleInfo(
-    arg: {
-      bufferInfo: BufferInfo, moduleName?: string,
-      rootDir?: Directory, moduleMap?: Map<string, ModuleInfo>
-    },
-  ) {
-    const { bufferInfo } = arg
-    let dat
-    if (arg.rootDir && arg.moduleMap) {
-      dat = { rootDir: arg.rootDir, moduleMap: arg.moduleMap }
-    } else {
-      dat = await this.getModuleMap({ bufferInfo })
-    }
-    const { moduleMap, rootDir } = dat
-    let moduleName = arg.moduleName
-    if (!moduleName) {
-      moduleName = await bufferInfo.getModuleName()
-    }
-    if (!moduleName) {
-      throw new Error(`Nameless module in ${bufferInfo.buffer.getUri()}`)
-    }
-
-    let moduleInfo = moduleMap.get(moduleName)
-    if (!moduleInfo) {
-      moduleInfo = new ModuleInfo(moduleName, this.process, rootDir)
-      moduleMap.set(moduleName, moduleInfo)
-
-      const mn = moduleName
-      moduleInfo.onDidDestroy(() => {
-        moduleMap.delete(mn)
-        Util.debug(`${moduleName} removed from map`)
-      })
-    }
-    await moduleInfo.setBuffer(bufferInfo)
-    return { bufferInfo, rootDir, moduleMap, moduleInfo, moduleName }
+    return result
   }
 
   private filter<T, K extends keyof T>(candidates: T[], prefix: string, keys: K[]): T[] {

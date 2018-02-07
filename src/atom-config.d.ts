@@ -4,6 +4,8 @@ declare module "atom" {
     'atom-haskell-hsdev': Object
     'atom-haskell-hsdev.hsdevPath': string
     'atom-haskell-hsdev.hsdevDb': string
+    'atom-haskell-hsdev.hsdevPort': number
+    'atom-haskell-hsdev.buildTool': 'cabal' | 'stack'
     'atom-haskell-hsdev.debug': boolean
     'atom-haskell-hsdev.additionalPathDirectories': Array<string>
     'atom-haskell-hsdev.initTimeout': number

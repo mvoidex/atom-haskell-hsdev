@@ -17,6 +17,12 @@ export const config = {
     description: 'Path to hsdev database',
     order: 0,
   },
+  hsdevPort: {
+    type: 'integer',
+    default: 4567,
+    description: 'Port of hsdev server',
+    order: 0,
+  },
   buildTool: {
     type: 'string',
     default: 'cabal',

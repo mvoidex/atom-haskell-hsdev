@@ -1,5 +1,6 @@
 import { CompositeDisposable, TextBuffer } from 'atom'
 import { parseHsModuleImports, IModuleImports, IImport } from 'atom-haskell-utils'
+import * as CB from 'atom-haskell-upi/completion-backend'
 
 export { IImport }
 
@@ -12,6 +13,8 @@ export class BufferInfo {
     this.disposables = new CompositeDisposable()
     this.disposables.add(this.buffer.onDidDestroy(this.destroy))
   }
+
+  public completions: CB.ISymbol[] | undefined
 
   public destroy = () => {
     this.disposables.dispose()
