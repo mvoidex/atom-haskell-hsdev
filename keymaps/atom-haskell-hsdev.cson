@@ -10,3 +10,4 @@
 'atom-workspace':
   'ctrl-alt-i': 'atom-haskell-hsdev:ping'
   'ctrl-k ctrl-i': 'atom-haskell-hsdev:whoat'
+  'f12': 'atom-haskell-hsdev:go-to-declaration'

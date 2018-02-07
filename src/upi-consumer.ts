@@ -24,6 +24,9 @@ const mainMenu = {
   label: 'hsdev',
   menu: [
     { label: 'Ping', command: 'atom-haskell-hsdev:ping' },
+    { label: 'Check', command: 'atom-haskell-hsdev:check-file' },
+    { label: 'Lint', command: 'atom-haskell-hsdev:lint-file' },
+    { label: 'Check & Lint', command: 'atom-haskell-hsdev:check-lint-file' },
   ],
 }
 
@@ -44,6 +47,7 @@ export class UPIConsumer {
   private globalCommands = {
     'atom-haskell-hsdev:check-file': this.checkCommand.bind(this),
     'atom-haskell-hsdev:lint-file': this.lintCommand.bind(this),
+    'atom-haskell-hsdev:check-lint-file': this.checkLintCommand.bind(this),
     'atom-haskell-hsdev:ping': this.pingCommand.bind(this),
     ...this.contextCommands,
   }
@@ -76,8 +80,8 @@ export class UPIConsumer {
       messageTypes: msgTypes,
       tooltip: this.shouldShowTooltip.bind(this),
       events: {
-        // onDidSaveBuffer: async (buffer) =>
-        //   this.checkLint(buffer, 'Save', atom.config.get('atom-haskell-hsdev.alwaysInteractiveCheck')),
+        onDidSaveBuffer: async (buffer) =>
+          this.checkLint(buffer, 'Save'),
         // onDidStopChanging: async (buffer) =>
         //   this.checkLint(buffer, 'Change', true),
       },
@@ -112,13 +116,26 @@ export class UPIConsumer {
 
   @handleException
   private async checkCommand({ currentTarget }: TECommandEvent) {
+    const editor = currentTarget.getModel()
+    const messages = await this.process.check(editor.getBuffer())
+    this.setMessages(messages)
   }
 
   @handleException
   private async lintCommand({ currentTarget }: TECommandEvent) {
+    const editor = currentTarget.getModel()
+    const messages = await this.process.lint(editor.getBuffer())
+    this.setMessages(messages)
   }
 
-  private async pingCommand({ currentTarget }: TECommandEvent) {
+  @handleException
+  private async checkLintCommand({ currentTarget }: TECommandEvent) {
+    const editor = currentTarget.getModel()
+    const messages = await this.process.checkAndLint(editor.getBuffer())
+    this.setMessages(messages)
+  }
+
+  private async pingCommand({ _currentTarget }: TECommandEvent) {
     this.process.doPing()
   }
 
@@ -153,8 +170,19 @@ export class UPIConsumer {
 
   private async whoatTooltip(e: TextEditor, p: Range) {
     // FIXME: Don't scan here
-    await this.process.backend.scanFile(e.getBuffer().getUri())
-    this.process.backend.infer([e.getBuffer().getUri()])
+    const file = e.getBuffer().getUri()
+    this.process.backend.scanFile({ file }, this.statusCallbacks(
+      `Inspecting ${file} with dependencies`,
+      (error, details) => `Error inspecting ${file}: ${error}, details: ${JSON.stringify(details)}`,
+      `File ${file} inspected`,
+      () => {
+        this.process.backend.infer([e.getBuffer().getUri()], this.statusCallbacks(
+          `Inferring types for ${file}`,
+          (error, details) => `Error inferring types for ${file}: ${error}, details: ${JSON.stringify(details)}`,
+          `Types for ${file} inferred`
+        ))
+      }
+    ))
     let irange: Range = p
     let info: string = ''
     try {
@@ -183,6 +211,48 @@ export class UPIConsumer {
         text: info,
         highlighter: atom.config.get('atom-haskell-hsdev.highlightTooltips') ?
           'source.haskell' : undefined,
+      }
+    }
+  }
+
+  private async checkLint(buffer: TextBuffer, opt: 'Save' | 'Change') {
+    const check = atom.config.get(
+      `atom-haskell-hsdev.on${opt}Check` as 'atom-haskell-hsdev.onSaveCheck' | 'atom-haskell-hsdev.onChangeCheck',
+    )
+    const lint = atom.config.get(
+      `atom-haskell-hsdev.on${opt}Lint` as 'atom-haskell-hsdev.onSaveLint' | 'atom-haskell-hsdev.onChangeLint',
+    )
+    let res
+    if (check && lint) {
+      res = await this.process.checkAndLint(buffer)
+    } else if (check) {
+      res = await this.process.check(buffer)
+    } else if (lint) {
+      res = await this.process.lint(buffer)
+    }
+    if (res) {
+      this.setMessages(res)
+    }
+  }
+
+  private statusCallbacks(
+    progress: string,
+    failure: (error: string, details: any) => string,
+    success: string,
+    onSuccess?: () => void
+  ): Callbacks {
+    return {
+      onNotify: (_notification: any) => {
+        this.upi.setStatus({status: 'progress', detail: progress})
+      },
+      onError: (error: string, details: any) => {
+        this.upi.setStatus({status: 'error', detail: failure(error, details)})
+      },
+      onResponse: (_response: any) => {
+        this.upi.setStatus({status: 'ready', detail: success})
+        if (onSuccess) {
+          onSuccess()
+        }
       }
     }
   }

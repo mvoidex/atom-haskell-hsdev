@@ -305,11 +305,63 @@ export class HsDevProcessReal {
     return await this.call('infer', {'projects': [], 'files': files}, callbacks)
   }
 
-  public async scanFile(
-    file: string,
+  public async check(
+    files: string[],
+    ghcOpts: string[] = [],
     callbacks?: Callbacks
   ) {
-    return await this.call('scan', {'files': [{'file': file, 'contents': null}]}, callbacks)
+    return await this.call('check', {
+      'files': files.map((value, _index, _array) => {
+        return {'file': value, 'contents': null}
+      }),
+      'ghc-opts': ghcOpts
+    }, callbacks)
+  }
+
+  public async lint(
+    files: string[],
+    lintOpts: string[] = [],
+    callbacks?: Callbacks
+  ) {
+    return await this.call('lint', {
+      'files': files.map((value, _index, _array) => {
+        return {'file': value, 'contents': null}
+      }),
+      'lint-opts': lintOpts
+    }, callbacks)
+  }
+
+  public async checkLint(
+    files: string[],
+    ghcOpts: string[] = [],
+    lintOpts: string[] = [],
+    callbacks?: Callbacks
+  ) {
+    return await this.call('check-lint', {
+      'files': files.map((value, _index, _array) => {
+        return {'file': value, 'contents': null}
+      }),
+      'ghc-opts': ghcOpts,
+      'lint-opts': lintOpts
+    }, callbacks)
+  }
+
+  public async scanFile(
+    opts: {
+      file: string,
+      buildTool?: 'cabal' | 'stack',
+      scanProject?: boolean,
+      scanDeps?: boolean
+    },
+    callbacks?: Callbacks
+  ) {
+    const tool = atom.config.get('atom-haskell-hsdev.buildTool')
+    return await this.call('scan file', {
+      'file': opts.file,
+      'build-tool': opts.buildTool || tool,
+      'scan-project': opts.scanProject != false,
+      'scan-deps': opts.scanDeps != false
+    }, callbacks)
   }
 
   public async scanCabal(callbacks?: Callbacks) {

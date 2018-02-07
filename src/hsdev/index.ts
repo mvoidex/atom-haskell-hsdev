@@ -138,6 +138,49 @@ export class HsDevProcess {
     })
   }
 
+  public async checkAndLint(buffer: TextBuffer) {
+    const file = buffer.getUri()
+    const messages = await this.backend.checkLint([file])
+    return this.convertMessages(messages)
+  }
+
+  public async check(buffer: TextBuffer) {
+    const file = buffer.getUri()
+    const messages = await this.backend.check([file])
+    return this.convertMessages(messages)
+  }
+
+  public async lint(buffer: TextBuffer) {
+    const file = buffer.getUri()
+    const messages = await this.backend.lint([file])
+    return this.convertMessages(messages)
+  }
+
+  private convertMessages(messages: any[]): UPI.IResultItem[] {
+    const result: UPI.IResultItem[] = []
+    for (const message of messages) {
+      const sev = (message.note.suggestion || message.level == 'hint') ? 'lint' : message.level
+      const lines: string[] = [message.note.message]
+      if (message.note.suggestion) {
+        const suggest: string[] = message.note.suggestion.split('\n')
+        if (suggest.length == 1) {
+          lines.push(`Why not: ${suggest[0]}`)
+        }
+        else {
+          lines.push('Why not:', ...suggest)
+        }
+      }
+      Util.debug()
+      result.push({
+        uri: message.source.file,
+        position: new Point(message.region.from.line - 1, message.region.from.column - 1),
+        severity: sev,
+        message: lines.join('\n')
+      })
+    }
+    return result
+  }
+
   private async getUPI() {
     return Promise.race([this.upiPromise, Promise.resolve(undefined)])
   }

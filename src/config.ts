@@ -17,6 +17,16 @@ export const config = {
     description: 'Path to hsdev database',
     order: 0,
   },
+  buildTool: {
+    type: 'string',
+    default: 'cabal',
+    description: 'build tool to use when scanning projects',
+    enum: [
+      { value: 'cabal', description: 'Cabal' },
+      { value: 'stack', description: 'Stack' },
+    ],
+    order: 0
+  },
   debug: {
     type: 'boolean',
     default: false,
